@@ -13,14 +13,9 @@ function skew(ω::Vector{T}) where {T}
             ω[3] 0 -ω[1];
             -ω[2] ω[1] 0]
 end
-function dynamics(model::NamedTuple,x,u)
-    # quadrotor dynamics with an MRP for attitude
-    r = x[1:3]
-    v = x[4:6]
-    p = x[7:9]
-    ω = x[10:12]
 
-    Q = dcm_from_mrp(p)
+function dynamics_multi_drone(model::NamedTuple, x, u)
+    # quadrotor dynamics with an MRP for attitude
 
     mass=model.mass
     J = model.J
@@ -28,33 +23,62 @@ function dynamics(model::NamedTuple,x,u)
     L= model.L
     kf=model.kf
     km=model.km
+    no_of_drones = model.no_of_drones
 
-    w1 = u[1]
-    w2 = u[2]
-    w3 = u[3]
-    w4 = u[4]
+    
+    result = []
+    
+    for drone = 1:no_of_drones
+        u_single_drone = u[(drone-1)*4 + 1: (drone-1)*4 + 4]
+        x_single_drone = x[(drone-1)*12 + 1: (drone-1)*12 + 12]
 
-    F1 = max(0,kf*w1)
-    F2 = max(0,kf*w2)
-    F3 = max(0,kf*w3)
-    F4 = max(0,kf*w4)
-    F = [0., 0., F1+F2+F3+F4] #total rotor force in body frame
+        r = x_single_drone[1:3]
+        v = x_single_drone[4:6]
+        p = x_single_drone[7:9]
+        ω = x_single_drone[10:12]
 
-    M1 = km*w1
-    M2 = km*w2
-    M3 = km*w3
-    M4 = km*w4
-    τ = [L*(F2-F4), L*(F3-F1), (M1-M2+M3-M4)] #total rotor torque in body frame
+        Q = dcm_from_mrp(p)
+        
+        w1 = u_single_drone[1]
+        w2 = u_single_drone[2]
+        w3 = u_single_drone[3]
+        w4 = u_single_drone[4]
 
-    f = mass*gravity + Q*F # forces in world frame
+        F1 = max(0,kf*w1)
+        F2 = max(0,kf*w2)
+        F3 = max(0,kf*w3)
+        F4 = max(0,kf*w4)
+        F = [0., 0., F1+F2+F3+F4] #total rotor force in body frame
 
-    [
-        v
-        f/mass
-        ((1+norm(p)^2)/4) *(   I + 2*(skew(p)^2 + skew(p))/(1+norm(p)^2)   )*ω
-        J\(τ - cross(ω,J*ω))
-    ]
+        M1 = km*w1
+        M2 = km*w2
+        M3 = km*w3
+        M4 = km*w4
+        τ = [L*(F2-F4), L*(F3-F1), (M1-M2+M3-M4)] #total rotor torque in body frame
+
+        f = mass*gravity + Q*F # forces in world frame
+
+        result = 
+        [
+            result
+            v
+            f/mass
+            ((1+norm(p)^2)/4) *(   I + 2*(skew(p)^2 + skew(p))/(1+norm(p)^2)   )*ω
+            J\(τ - cross(ω,J*ω))
+        ]
+    end
+        
+    return result
 end
+
+# function dynamics(model::NamedTuple,x,u)
+    
+#     for i = 1:no_of_drones
+#         d = dynamics_single_drone(model::NamedTuple, x, u)
+#     end
+# #     @show d
+#     @error ("dwec")
+# end
 function rk4(model,ode,x,u,dt)
     k1 = dt*ode(model,x, u)
     k2 = dt*ode(model,x + k1/2, u)
@@ -85,6 +109,7 @@ function animate_quadrotor(no_of_drones, Xsim, dt)
     @assert num_points > 0
     
     num_states = size(Xsim[1], 1)
+    @show num_states
     @assert num_states == no_of_drones * 12
     
     for k = 2:length(Xsim)
